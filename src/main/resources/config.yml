@@ -1,0 +1,28 @@
+# PixelWarp Configuration
+config-version: 1
+
+database:
+  host: localhost
+  port: 3306
+  database: pixelwarp
+  username: root
+  password: ""
+  pool-size: 5
+
+# UUIDs of server owners who can delete any warp
+server-owners:
+  - "00000000-0000-0000-0000-000000000000"
+
+teleport:
+  countdown-seconds: 2
+  safe-check: true
+
+preview:
+  duration-seconds: 10
+
+particles:
+  warp-marker:
+    enabled: true
+    radius: 10
+    particle-count: 4
+    interval-ticks: 20

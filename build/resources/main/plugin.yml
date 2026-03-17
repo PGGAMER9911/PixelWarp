@@ -1,0 +1,20 @@
+name: PixelWarp
+version: '1.0.0'
+main: com.pixelwarp.WarpPlugin
+api-version: '1.21'
+description: Advanced Warp System for SMP
+author: PixelWarp
+
+commands:
+  warp:
+    description: Teleport to a warp or manage warps (edit, rename, access, export, import)
+    usage: /warp <name|preview|stats|top|edit|rename|access|export|import>
+  warps:
+    description: Open the warp GUI
+    usage: /warps
+  setwarp:
+    description: Create a new warp
+    usage: /setwarp <name> [category] [public|private]
+  delwarp:
+    description: Delete a warp (requires confirmation)
+    usage: /delwarp <name> [confirm]
