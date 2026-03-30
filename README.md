@@ -1,130 +1,162 @@
 # PixelWarp
 
-Advanced Warp System for Paper SMP servers with MySQL, GUI browsing, preview mode, access control, and safe teleports.
+Advanced, production-ready warp plugin for Paper servers with dual storage (FILE + MySQL), access control, preview mode, runtime reload, backups, and modular particle animations.
 
-## At a Glance
-
-- Plugin Name: PixelWarp
-- Minecraft Version: Paper 1.21.1+
-- Java Version: 21+
-- Database: MySQL 5.7+ / 8.0+
-- Type: Advanced Warp Management Plugin
+[![Minecraft](https://img.shields.io/badge/Paper-1.21.1%2B-brightgreen)](https://papermc.io)
+[![Java](https://img.shields.io/badge/Java-21%2B-blue)](https://adoptium.net)
+[![Storage](https://img.shields.io/badge/Storage-FILE%20%7C%20MySQL-orange)](#storage-modes)
+[![License](https://img.shields.io/badge/License-MIT-lightgrey)](LICENSE)
 
 ## Why PixelWarp
 
-PixelWarp is built for SMP servers that want fast, secure, and organized warp management.
-It combines an easy player experience with admin-level control and analytics.
+PixelWarp is built for SMP servers that need reliability under real load:
 
-## Core Features
+- Fast warp access with in-memory indexing
+- Safe persistence with FILE/MySQL provider model
+- Read-only failsafe if storage health is compromised
+- Runtime reload controls without full restart
+- Clean admin tools and health report output
 
-### Warp Management
-- Create warps with custom name and category
-- Public and private warp visibility
-- Rename and edit warp metadata
-- Secure delete flow with confirmation
+## Visual Overview
 
-### Smart Navigation
-- GUI menu for all warps
-- Category filters
-- Search support
-- Pagination for large warp lists
+```mermaid
+flowchart LR
+    A[Player Commands] --> B[WarpCommand and SetWarpCommand]
+    B --> C[WarpManager]
+    C --> D{Storage Provider}
+    D --> E[FileStorageProvider]
+    D --> F[WarpStorage MySQL]
+    C --> G[WarpAccessManager]
+    C --> H[ParticleEngine]
+    B --> I[ReloadManager]
+    I --> J[ConfigValidator]
+    E --> K[Backup and Recovery]
+```
 
-### Teleport Experience
-- Teleport countdown system
-- Cancel on player movement
-- Safe teleport checks for dangerous locations
-- Sound and visual feedback
+## Feature Highlights
 
-### Preview and Analytics
-- Spectator-based warp preview mode
-- Auto return after preview timeout
-- Usage tracking per warp
-- Last used and stats display
+### Core Warp System
 
-### Access and Data Tools
-- Private warp access sharing
-- MySQL-backed persistent storage
-- Export and import support
-- Automatic table creation and migration handling
+- Create warp: /setwarp <name> [category] [public|private]
+- Delete warp with confirmation: /delwarp <name> [confirm]
+- Shared create/delete cooldown from config
+- Edit, rename, visibility updates
 
-## Command Reference
+### Access and Administration
 
-### Main Commands
-- /setwarp <name> [category] [public|private]
-- /warp <name>
-- /warps
-- /delwarp <name> [confirm]
+- Private warp sharing: /warp access add/remove/list
+- Global admins and server owners
+- Runtime reload: /warp reload [config|storage|all]
+- Shortcut command: /pwarp reload [config|storage|all]
 
-### Warp Subcommands
-- /warp preview <name>
-- /warp stats <name>
-- /warp top
-- /warp edit
-- /warp rename
-- /warp access
-- /warp export
-- /warp import
+### Safety and Data Integrity
 
-## Warp Categories
+- FILE mode with optional AES encryption
+- Optional FILE compression support
+- Backup and restore fallback path
+- Manual backup command: /warp backup confirm
+- Migration safety with duplicate-skip behavior
+- Read-only failsafe when persistence risk is detected
 
-- SPAWN
-- SHOPS
-- BASES
-- EVENTS
-- PLAYER_WARPS
+### Player Experience
 
-## Requirements
+- GUI browsing: /warps
+- Warp preview mode
+- Top and stats commands
+- Modular particle engine with category styles
 
-| Item | Required |
-|------|----------|
-| Server Software | Paper 1.21.1+ |
-| Java Runtime | Java 21+ |
-| Database | MySQL 5.7+ or 8.0+ |
+## Command Map
 
-## Installation
+```mermaid
+mindmap
+  root((PixelWarp Commands))
+    setwarp
+      create warp
+      category and visibility
+    delwarp
+      confirmation flow
+      safe delete
+    warp
+      teleport
+      preview
+      stats
+      top
+      edit
+      rename
+      access
+      export and import
+      debug
+      reload
+      backup confirm
+    pwarp
+      reload config
+      reload storage
+      reload all
+    warps
+      open GUI
+```
 
-1. Build the plugin jar or use prebuilt release.
-2. Put jar file inside server plugins folder.
+## Storage Modes
+
+| Mode | Default | Notes |
+|---|---|---|
+| FILE | Yes | Supports encryption, compression, backup restore, failsafe |
+| MYSQL | Optional | Uses existing schema and async operations |
+
+## Quick Start
+
+1. Build plugin jar via Gradle.
+2. Put jar in plugins folder.
 3. Start server once to generate config.
-4. Update MySQL and owner UUID values in config.
+4. Set storage settings and owner/admin UUIDs.
 5. Restart server.
+
+## Important Config Keys
+
+```yaml
+storage:
+  type: FILE
+
+warp:
+  create-delete-cooldown-seconds: 5
+
+file:
+  path: plugins/PixelWarp/data/
+  encryption: true
+  secret-key: "change-this-to-16-char-key"
+  compression: false
+```
+
+See full configuration and operational guide in [GUIDE.md](GUIDE.md).
 
 ## Build From Source
 
-1. Open project folder.
-2. Run gradle shadow jar build.
-3. Output jar will be available in build/libs.
+Windows PowerShell:
 
-## Config Highlights
+```powershell
+.\gradlew.bat build
+```
 
-Main configuration areas:
-- database: host, port, schema, credentials, pool size
-- server-owners: UUID list for full delete authority
-- teleport: countdown and safety check
-- preview: preview duration seconds
-- particles: warp marker visual settings
+Jar output:
 
-## Project Structure
+- build/libs/
 
-- src/main/java/com/pixelwarp: all core source code
-- src/main/resources: plugin.yml and config.yml defaults
-- GUIDE.md: full usage and deep documentation
+## Project Layout
 
-## Perfect For
+- src/main/java/com/pixelwarp
+- src/main/resources/config.yml
+- src/main/resources/plugin.yml
+- GUIDE.md
 
-- Public SMP servers
-- Community servers with many player warps
-- Servers needing category-based warp organization
-- Admin teams that want database-backed reliability
+## Repository
 
-## Future Friendly
+- GitHub: https://github.com/PGGAMER9911/PixelWarp.git
 
-PixelWarp is structured for easy extension, making it suitable for adding future gameplay systems, economy integration, and permission expansions.
+## Maintainer
 
-## Support
+- Username: PGGAMER9911
+- Email: gamitparth04@gmail.com
 
-If you are using this plugin in production, keep regular database backups and test config changes on a staging server first.
+## Notes
 
----
-
-Built for modern Paper SMP servers.
+For production servers, keep regular backups and test config changes on staging before live rollout.
