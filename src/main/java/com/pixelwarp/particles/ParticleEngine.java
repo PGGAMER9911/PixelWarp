@@ -13,7 +13,6 @@ import org.bukkit.scheduler.BukkitRunnable;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -21,40 +20,26 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Category-aware warp particle engine with chunk indexing and distance-based LOD.
+ * Balanced particle engine with distance-based modes and chunk indexing.
  */
 public class ParticleEngine extends BukkitRunnable {
-
-    private enum PatternType {
-        RING,
-        SPIRAL,
-        PULSE;
-
-        static PatternType fromConfig(String value) {
-            if (value == null) {
-                return null;
-            }
-
-            try {
-                return PatternType.valueOf(value.trim().toUpperCase(Locale.ROOT));
-            } catch (IllegalArgumentException ignored) {
-                return null;
-            }
-        }
-    }
 
     private record ParticleStyle(ParticlePattern pattern, Particle particle) {}
     private record NearbyWarp(Warp warp, double distanceSquared) {}
 
+    private static final double FOCUS_DISTANCE = 5.0;
+
     private final WarpManager warpManager;
     private final double radiusSquared;
+    private final double focusDistanceSquared;
     private final int maxHeightDiff;
     private final int maxWarpsPerPlayer;
+    private final int maxParticlesPerWarp;
+    private final boolean dynamicScaling;
     private final int indexRefreshTicks;
     private final int chunkRadius;
-    private final double intensityMultiplier;
-    private final EnumMap<PatternType, ParticleStyle> patternStyles = new EnumMap<>(PatternType.class);
-    private final EnumMap<WarpCategory, PatternType> categoryStyleMap = new EnumMap<>(WarpCategory.class);
+    private final ParticleStyle idleStyle;
+    private final ParticleStyle focusStyle;
 
     /** world name (lowercase) -> (chunk key -> warps in that chunk) */
     private Map<String, Map<Long, List<Warp>>> worldChunkIndex = Collections.emptyMap();
@@ -62,21 +47,24 @@ public class ParticleEngine extends BukkitRunnable {
 
     public ParticleEngine(WarpManager warpManager, int radius, int maxHeightDiff,
                           int maxWarpsPerPlayer, int indexRefreshTicks,
+                          int maxParticlesPerWarp, boolean dynamicScaling,
                           double intensityMultiplier,
                           Set<String> enabledPatterns,
                           Map<WarpCategory, String> categoryStyles) {
         this.warpManager = warpManager;
 
-        int effectiveRadius = Math.max(8, radius);
+        // Hard cap to keep rendering bounded and predictable.
+        int effectiveRadius = Math.max(4, Math.min(12, radius));
         this.radiusSquared = effectiveRadius * effectiveRadius;
+        this.focusDistanceSquared = FOCUS_DISTANCE * FOCUS_DISTANCE;
         this.maxHeightDiff = Math.max(8, maxHeightDiff);
         this.maxWarpsPerPlayer = Math.max(1, maxWarpsPerPlayer);
+        this.maxParticlesPerWarp = Math.max(1, Math.min(3, maxParticlesPerWarp));
+        this.dynamicScaling = dynamicScaling;
         this.indexRefreshTicks = Math.max(20, indexRefreshTicks);
         this.chunkRadius = Math.max(1, (int) Math.ceil(effectiveRadius / 16.0));
-        this.intensityMultiplier = Math.max(0.25, intensityMultiplier);
-
-        registerPatternStyles(enabledPatterns);
-        resolveCategoryStyles(categoryStyles);
+        this.idleStyle = new ParticleStyle(new RingParticlePattern(0.9, 1.35, 0.12), Particle.END_ROD);
+        this.focusStyle = new ParticleStyle(new SpiralParticlePattern(0.55, 0.85, 1.4, 0.18, 0.06), Particle.PORTAL);
     }
 
     @Override
@@ -94,53 +82,6 @@ public class ParticleEngine extends BukkitRunnable {
         for (Player player : Bukkit.getOnlinePlayers()) {
             renderForPlayer(player);
         }
-    }
-
-    private void registerPatternStyles(Set<String> enabledPatterns) {
-        Set<String> enabled = enabledPatterns != null ? enabledPatterns : Set.of("RING", "SPIRAL", "PULSE");
-
-        if (enabled.contains("RING")) {
-            patternStyles.put(PatternType.RING,
-                    new ParticleStyle(new RingParticlePattern(0.9, 1.35, 0.12), Particle.END_ROD));
-        }
-        if (enabled.contains("SPIRAL")) {
-            patternStyles.put(PatternType.SPIRAL,
-                    new ParticleStyle(new SpiralParticlePattern(0.6, 0.9, 1.6, 0.14, 0.045), Particle.ENCHANT));
-        }
-        if (enabled.contains("PULSE")) {
-            patternStyles.put(PatternType.PULSE,
-                    new ParticleStyle(new PulseParticlePattern(0.25, 0.9, 1.0, 0.16), Particle.PORTAL));
-        }
-
-        if (patternStyles.isEmpty()) {
-            patternStyles.put(PatternType.PULSE,
-                    new ParticleStyle(new PulseParticlePattern(0.25, 0.9, 1.0, 0.16), Particle.PORTAL));
-        }
-    }
-
-    private void resolveCategoryStyles(Map<WarpCategory, String> categoryStyles) {
-        PatternType fallback = patternStyles.keySet().iterator().next();
-
-        for (WarpCategory category : WarpCategory.values()) {
-            String configured = categoryStyles != null ? categoryStyles.get(category) : null;
-            PatternType requested = PatternType.fromConfig(configured);
-            if (requested != null && patternStyles.containsKey(requested)) {
-                categoryStyleMap.put(category, requested);
-            } else {
-                categoryStyleMap.put(category, defaultStyleFor(category, fallback));
-            }
-        }
-    }
-
-    private PatternType defaultStyleFor(WarpCategory category, PatternType fallback) {
-        PatternType preferred = switch (category) {
-            case SPAWN -> PatternType.RING;
-            case SHOPS -> PatternType.PULSE;
-            case BASES, EVENTS -> PatternType.SPIRAL;
-            case PLAYER_WARPS -> PatternType.PULSE;
-        };
-
-        return patternStyles.containsKey(preferred) ? preferred : fallback;
     }
 
     private void renderForPlayer(Player player) {
@@ -192,19 +133,13 @@ public class ParticleEngine extends BukkitRunnable {
                 break;
             }
 
-            int detailLevel = detailLevel(candidate.distanceSquared());
-            if (skipFrame(detailLevel)) {
+            boolean focusMode = candidate.distanceSquared() < focusDistanceSquared;
+            int detailLevel = detailLevel(candidate.distanceSquared(), focusMode);
+            if (skipFrame(detailLevel, focusMode)) {
                 continue;
             }
 
-            PatternType patternType = categoryStyleMap.getOrDefault(candidate.warp().getCategory(), PatternType.PULSE);
-            ParticleStyle style = patternStyles.get(patternType);
-            if (style == null && !patternStyles.isEmpty()) {
-                style = patternStyles.values().iterator().next();
-            }
-            if (style == null) {
-                continue;
-            }
+            ParticleStyle style = focusMode ? focusStyle : idleStyle;
 
             Location center = new Location(world,
                     candidate.warp().getX(),
@@ -236,23 +171,28 @@ public class ParticleEngine extends BukkitRunnable {
         this.worldChunkIndex = newIndex;
     }
 
-    private int detailLevel(double distanceSquared) {
-        double distance = Math.sqrt(distanceSquared);
-        int base;
-        if (distance <= 8) base = 6;
-        else if (distance <= 14) base = 5;
-        else if (distance <= 20) base = 4;
-        else if (distance <= 28) base = 3;
-        else base = 2;
+    private int detailLevel(double distanceSquared, boolean focusMode) {
+        if (!dynamicScaling) {
+            if (focusMode) {
+                return Math.max(2, maxParticlesPerWarp);
+            }
+            return Math.min(2, maxParticlesPerWarp);
+        }
 
-        return Math.max(1, (int) Math.round(base * intensityMultiplier));
+        if (focusMode) {
+            double normalized = Math.max(0.0, Math.min(1.0, distanceSquared / focusDistanceSquared));
+            double scaled = maxParticlesPerWarp - normalized;
+            return Math.max(2, Math.min(maxParticlesPerWarp, (int) Math.round(scaled)));
+        }
+
+        double idleRange = Math.max(1.0, radiusSquared - focusDistanceSquared);
+        double normalized = Math.max(0.0, Math.min(1.0, (distanceSquared - focusDistanceSquared) / idleRange));
+        double scaled = 2.0 - normalized;
+        return Math.max(1, Math.min(Math.min(2, maxParticlesPerWarp), (int) Math.round(scaled)));
     }
 
-    private boolean skipFrame(int detailLevel) {
-        if (detailLevel <= 2) {
-            return animationTick % 3 != 0;
-        }
-        if (detailLevel == 3) {
+    private boolean skipFrame(int detailLevel, boolean focusMode) {
+        if (!focusMode && detailLevel <= 1) {
             return animationTick % 2 != 0;
         }
         return false;

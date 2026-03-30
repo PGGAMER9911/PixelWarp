@@ -82,11 +82,18 @@ preview:
   duration-seconds: 10
 
 particles:
+  enabled: true
+  radius: 12
+  max-per-warp: 3
+  interval-ticks: 40
+  dynamic: true
+
+  # Advanced engine options (optional)
   engine:
     enabled: true
     intensity: 1.0
     radius: 32
-    interval-ticks: 5
+    interval-ticks: 40
     index-refresh-ticks: 40
     max-height-diff: 24
     max-warps-per-player: 4
@@ -138,6 +145,9 @@ flowchart TD
 | /setwarp <name> [category] [public|private] | Create warp |
 | /delwarp <name> [confirm] | Delete warp with confirmation flow |
 | /warp <name> | Teleport to warp |
+| /warp help | Show major command guide |
+| /warp info | Show plugin info, storage mode, total warps |
+| /warp version | Show plugin version |
 | /warps | Open warp GUI |
 | /warp preview <name> | Preview warp location |
 | /warp stats <name> | Show warp details |
@@ -173,6 +183,18 @@ Shared cooldown applies between create and delete actions.
 - Scope: per player
 - Applies to: successful /setwarp and /delwarp actions
 - Set value to 0 to disable this cooldown
+
+## Particle Behavior
+
+Particle system is tuned for visual quality with low server impact.
+
+- `>12 blocks`: no particles rendered
+- `5-12 blocks`: idle ring animation using END_ROD
+- `<5 blocks`: focus spiral animation using PORTAL
+- Per-warp particle points are capped to `2-3` depending on distance
+- Task interval defaults to `40` ticks
+
+Teleport arrival uses a one-time firework-style burst effect.
 
 ## Reload and Failsafe
 

@@ -23,7 +23,7 @@ public class SpiralParticlePattern implements ParticlePattern {
 
     @Override
     public void render(Player viewer, Location center, long tick, Particle particle, int detailLevel) {
-        int points = Math.max(4, detailLevel * 2);
+        int points = Math.max(1, detailLevel);
         double baseAngle = tick * rotationSpeed;
         double verticalBase = tick * verticalSpeed;
 

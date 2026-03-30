@@ -572,10 +572,15 @@ public class WarpPlugin extends JavaPlugin {
             particleEngine = null;
         }
 
-        boolean particlesEnabled = getConfig().getBoolean("particles.engine.enabled", true);
+        boolean particlesEnabled = getConfig().getBoolean("particles.enabled",
+            getConfig().getBoolean("particles.engine.enabled", true));
         if (particlesEnabled) {
-            int radius = getConfig().getInt("particles.engine.radius", 32);
-            int interval = getConfig().getInt("particles.engine.interval-ticks", 5);
+            int radius = getConfig().getInt("particles.radius",
+                getConfig().getInt("particles.engine.radius", 12));
+            int interval = getConfig().getInt("particles.interval-ticks",
+                getConfig().getInt("particles.engine.interval-ticks", 40));
+            int maxPerWarp = getConfig().getInt("particles.max-per-warp", 3);
+            boolean dynamicScaling = getConfig().getBoolean("particles.dynamic", true);
             int indexRefreshTicks = getConfig().getInt("particles.engine.index-refresh-ticks", 40);
             int maxHeightDiff = getConfig().getInt("particles.engine.max-height-diff", 24);
             int maxWarpsPerPlayer = getConfig().getInt("particles.engine.max-warps-per-player", 4);
@@ -604,11 +609,13 @@ public class WarpPlugin extends JavaPlugin {
                     maxHeightDiff,
                     maxWarpsPerPlayer,
                     indexRefreshTicks,
+                    maxPerWarp,
+                    dynamicScaling,
                     intensity,
                     enabledPatterns,
                     categoryStyles
             );
-            particleEngine.runTaskTimer(this, 40L, Math.max(1, interval));
+            particleEngine.runTaskTimer(this, 40L, Math.max(20, interval));
         }
     }
 

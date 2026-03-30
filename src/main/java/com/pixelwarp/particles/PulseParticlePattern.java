@@ -20,7 +20,7 @@ public class PulseParticlePattern implements ParticlePattern {
 
     @Override
     public void render(Player viewer, Location center, long tick, Particle particle, int detailLevel) {
-        int points = Math.max(4, detailLevel * 2);
+        int points = Math.max(1, detailLevel);
         double pulse = (Math.sin(tick * pulseSpeed) + 1.0) * 0.5;
         double radius = minRadius + ((maxRadius - minRadius) * pulse);
         double y = center.getY() + yOffset;

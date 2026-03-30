@@ -79,15 +79,22 @@ public class WarpCommand implements CommandExecutor, TabCompleter {
 
         // /warp with no args → usage
         if (args.length == 0) {
-            if (sender instanceof Player player) {
-                sendUsage(player);
-            } else {
-                sender.sendMessage(MessageUtil.info("Usage: /warp <name|preview|stats|top|edit|rename|access|export|import|debug|reload|backup>"));
-            }
+            sendUsage(sender);
             return true;
         }
 
         String sub = args[0].toLowerCase();
+
+        if (sub.equals("help")) {
+            sendUsage(sender);
+            return true;
+        }
+        if (sub.equals("version")) {
+            return handleVersion(sender);
+        }
+        if (sub.equals("info")) {
+            return handleInfo(sender);
+        }
 
         if (sub.equals("debug")) {
             return handleDebug(sender);
@@ -517,22 +524,42 @@ public class WarpCommand implements CommandExecutor, TabCompleter {
     // Usage
     // =========================================================================
 
-    private void sendUsage(Player player) {
-        player.sendMessage(Component.empty());
-        player.sendMessage(MessageUtil.header("Warp Commands"));
-        player.sendMessage(MessageUtil.info("/warp <name> - Teleport to warp"));
-        player.sendMessage(MessageUtil.info("/warp preview <name> - Preview warp"));
-        player.sendMessage(MessageUtil.info("/warp stats <name> - Warp statistics"));
-        player.sendMessage(MessageUtil.info("/warp top - Top 5 warps"));
-        player.sendMessage(MessageUtil.info("/warp edit <name> <...> - Edit warp"));
-        player.sendMessage(MessageUtil.info("/warp rename <old> <new> - Rename warp"));
-        player.sendMessage(MessageUtil.info("/warp access <add|remove|list> <warp> - Manage access"));
-        player.sendMessage(MessageUtil.info("/warp export - Export warps to JSON"));
-        player.sendMessage(MessageUtil.info("/warp import [file] - Import warps from JSON"));
-        player.sendMessage(MessageUtil.info("/warp debug - Show plugin health report"));
-        player.sendMessage(MessageUtil.info("/warp reload [config|storage|all] - Safe runtime reload"));
-        player.sendMessage(MessageUtil.info("/warp backup confirm - Create immediate file storage backup"));
-        player.sendMessage(Component.empty());
+    private void sendUsage(CommandSender sender) {
+        sender.sendMessage(Component.empty());
+        sender.sendMessage(MessageUtil.header("Warp Commands"));
+        sender.sendMessage(MessageUtil.info("/warp help - Show command guide"));
+        sender.sendMessage(MessageUtil.info("/warp info - Plugin info and runtime stats"));
+        sender.sendMessage(MessageUtil.info("/warp version - Show plugin version"));
+        sender.sendMessage(MessageUtil.info("/warp <name> - Teleport to warp"));
+        sender.sendMessage(MessageUtil.info("/warp preview <name> - Preview warp"));
+        sender.sendMessage(MessageUtil.info("/warp stats <name> - Warp statistics"));
+        sender.sendMessage(MessageUtil.info("/warp top - Top 5 warps"));
+        sender.sendMessage(MessageUtil.info("/warp edit <name> <...> - Edit warp"));
+        sender.sendMessage(MessageUtil.info("/warp rename <old> <new> - Rename warp"));
+        sender.sendMessage(MessageUtil.info("/warp access <add|remove|list> <warp> - Manage access"));
+        sender.sendMessage(MessageUtil.info("/warp export - Export warps to JSON"));
+        sender.sendMessage(MessageUtil.info("/warp import [file] - Import warps from JSON"));
+        sender.sendMessage(MessageUtil.info("/warp debug - Show plugin health report"));
+        sender.sendMessage(MessageUtil.info("/warp reload [config|storage|all] - Safe runtime reload"));
+        sender.sendMessage(MessageUtil.info("/warp backup confirm - Create immediate file storage backup"));
+        sender.sendMessage(Component.empty());
+    }
+
+    private boolean handleVersion(CommandSender sender) {
+        sender.sendMessage(MessageUtil.success("PixelWarp version " + plugin.getDescription().getVersion()));
+        return true;
+    }
+
+    private boolean handleInfo(CommandSender sender) {
+        sender.sendMessage(Component.empty());
+        sender.sendMessage(MessageUtil.header("PixelWarp Info"));
+        sender.sendMessage(MessageUtil.label("Plugin: ", "PixelWarp"));
+        sender.sendMessage(MessageUtil.label("Version: ", plugin.getDescription().getVersion()));
+        sender.sendMessage(MessageUtil.label("Author: ", "Parthiv Gamit"));
+        sender.sendMessage(MessageUtil.label("Storage: ", plugin.getStorageMode()));
+        sender.sendMessage(MessageUtil.label("Total Warps: ", String.valueOf(warpManager.getWarpCount())));
+        sender.sendMessage(Component.empty());
+        return true;
     }
 
     private boolean handleDebug(CommandSender sender) {
@@ -642,7 +669,7 @@ public class WarpCommand implements CommandExecutor, TabCompleter {
 
         if (!(sender instanceof Player player)) {
             if (args.length == 1) {
-                return filter(List.of("debug", "reload", "backup"), args[0]);
+                return filter(List.of("help", "info", "version", "debug", "reload", "backup"), args[0]);
             }
             if (args.length == 2 && args[0].equalsIgnoreCase("reload")) {
                 return filter(List.of("config", "storage", "all"), args[1]);
@@ -652,7 +679,7 @@ public class WarpCommand implements CommandExecutor, TabCompleter {
 
         if (args.length == 1) {
             List<String> completions = new ArrayList<>();
-            completions.addAll(List.of("preview", "stats", "top", "edit", "rename", "access", "export", "import",
+            completions.addAll(List.of("help", "info", "version", "preview", "stats", "top", "edit", "rename", "access", "export", "import",
                     "debug", "reload", "backup"));
             completions.addAll(warpManager.getVisibleWarpNames(player));
             return filter(completions, args[0]);

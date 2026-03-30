@@ -41,6 +41,7 @@ flowchart LR
 - Delete warp with confirmation: /delwarp <name> [confirm]
 - Shared create/delete cooldown from config
 - Edit, rename, visibility updates
+- Quick helper commands: /warp help, /warp info, /warp version
 
 ### Access and Administration
 
@@ -63,7 +64,17 @@ flowchart LR
 - GUI browsing: /warps
 - Warp preview mode
 - Top and stats commands
-- Modular particle engine with category styles
+- Distance-aware particle modes (idle/focus) with low overhead
+
+### Particle Performance Profile
+
+- Players-first rendering loop
+- Distance bands:
+  - `< 5 blocks`: Focus mode (spiral + portal)
+  - `5-12 blocks`: Idle mode (ring + end rod)
+  - `> 12 blocks`: no particles
+- Max particle points per warp frame: 3
+- Runtime interval default: 40 ticks
 
 ## Command Map
 
@@ -77,6 +88,9 @@ mindmap
       confirmation flow
       safe delete
     warp
+      help
+      info
+      version
       teleport
       preview
       stats
@@ -119,6 +133,13 @@ storage:
 
 warp:
   create-delete-cooldown-seconds: 5
+
+particles:
+  enabled: true
+  radius: 12
+  max-per-warp: 3
+  interval-ticks: 40
+  dynamic: true
 
 file:
   path: plugins/PixelWarp/data/

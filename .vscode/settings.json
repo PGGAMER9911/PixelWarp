@@ -1,0 +1,17 @@
+{
+  "java.import.gradle.enabled": true,
+  "java.import.gradle.wrapper.enabled": true,
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "java.import.exclusions": [
+    "**/build/**",
+    "**/.gradle/**",
+    "**/bin/**"
+  ],
+  "java.project.resourceFilters": [
+    "node_modules",
+    ".git",
+    "build",
+    ".gradle",
+    "bin"
+  ]
+}

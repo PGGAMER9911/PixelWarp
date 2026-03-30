@@ -57,6 +57,11 @@ public final class ConfigValidator {
         }
 
         changed |= ensureMinInt(config, "warp.create-delete-cooldown-seconds", 0, 5, logger);
+        changed |= ensureBoolean(config, "particles.enabled", true);
+        changed |= ensureRangeInt(config, "particles.radius", 4, 12, 12, logger);
+        changed |= ensureRangeInt(config, "particles.max-per-warp", 1, 3, 3, logger);
+        changed |= ensureMinInt(config, "particles.interval-ticks", 20, 40, logger);
+        changed |= ensureBoolean(config, "particles.dynamic", true);
 
         changed |= ensureString(config, "mysql.host", "localhost", logger);
         changed |= ensurePort(config, "mysql.port", 3306, logger);
@@ -117,6 +122,25 @@ public final class ConfigValidator {
         int value = config.getInt(path, fallback);
         if (value < min) {
             logger.warning(path + " is too low. Falling back to " + fallback + ".");
+            config.set(path, fallback);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean ensureRangeInt(FileConfiguration config, String path, int min, int max,
+                                          int fallback, Logger logger) {
+        int value = config.getInt(path, fallback);
+        if (value < min || value > max) {
+            logger.warning(path + " is out of range (" + min + "-" + max + "). Falling back to " + fallback + ".");
+            config.set(path, fallback);
+            return true;
+        }
+        return false;
+    }
+
+    private static boolean ensureBoolean(FileConfiguration config, String path, boolean fallback) {
+        if (!config.contains(path)) {
             config.set(path, fallback);
             return true;
         }

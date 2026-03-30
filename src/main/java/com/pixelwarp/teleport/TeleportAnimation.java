@@ -23,6 +23,7 @@ public class TeleportAnimation {
     private final int countdownSeconds;
     private final boolean safeTeleportEnabled;
     private final Map<UUID, BukkitTask> activeTeleports = new ConcurrentHashMap<>();
+    private final Particle teleportBurstParticle = resolveTeleportBurstParticle();
 
     public TeleportAnimation(Plugin plugin, int countdownSeconds, boolean safeTeleportEnabled) {
         this.plugin = plugin;
@@ -107,9 +108,11 @@ public class TeleportAnimation {
         player.teleport(destination);
         player.playSound(destination, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 1.0f);
 
-        // Small arrival particle burst
-        destination.getWorld().spawnParticle(Particle.PORTAL, destination.clone().add(0, 1, 0),
-                10, 0.3, 0.5, 0.3, 0.1);
+        // One-time arrival burst in firework style.
+        if (destination.getWorld() != null) {
+            destination.getWorld().spawnParticle(teleportBurstParticle, destination.clone().add(0, 1, 0),
+                    20, 0.6, 0.5, 0.6, 0.02);
+        }
         player.sendMessage(MessageUtil.success("Teleported!"));
     }
 
@@ -146,5 +149,13 @@ public class TeleportAnimation {
 
     public boolean isTeleporting(UUID uuid) {
         return activeTeleports.containsKey(uuid);
+    }
+
+    private Particle resolveTeleportBurstParticle() {
+        try {
+            return Particle.valueOf("FIREWORK");
+        } catch (IllegalArgumentException ignored) {
+            return Particle.END_ROD;
+        }
     }
 }

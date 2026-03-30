@@ -53,6 +53,11 @@ preview:
   duration-seconds: 10
 
 particles:
+  enabled: true
+  radius: 12
+  max-per-warp: 3
+  interval-ticks: 40
+  dynamic: true
   engine:
     enabled: true
     intensity: 1.0

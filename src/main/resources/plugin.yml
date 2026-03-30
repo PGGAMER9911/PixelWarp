@@ -7,8 +7,8 @@ author: PixelWarp
 
 commands:
   warp:
-    description: Teleport to a warp or manage warps (edit, rename, access, export, import, debug, reload, backup)
-    usage: /warp <name|preview|stats|top|edit|rename|access|export|import|debug|reload|backup>
+    description: Teleport to a warp or manage warps (help, info, version, edit, rename, access, export, import, debug, reload, backup)
+    usage: /warp <name|help|info|version|preview|stats|top|edit|rename|access|export|import|debug|reload|backup>
   pwarp:
     description: PixelWarp admin command
     usage: /pwarp reload [config|storage|all]

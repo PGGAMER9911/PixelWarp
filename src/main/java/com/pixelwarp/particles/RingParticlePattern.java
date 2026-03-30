@@ -18,7 +18,7 @@ public class RingParticlePattern implements ParticlePattern {
 
     @Override
     public void render(Player viewer, Location center, long tick, Particle particle, int detailLevel) {
-        int points = Math.max(4, detailLevel * 2);
+        int points = Math.max(1, detailLevel);
         double angleOffset = tick * rotationSpeed;
         double y = center.getY() + yOffset;
 
