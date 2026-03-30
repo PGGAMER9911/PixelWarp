@@ -20,7 +20,6 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryType;
 import org.bukkit.event.inventory.PrepareAnvilEvent;
-import org.bukkit.inventory.AnvilInventory;
 import org.bukkit.inventory.view.AnvilView;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -146,6 +145,12 @@ public class MenuListener implements Listener {
     }
 
     private void handleWarpMenuClick(InventoryClickEvent event, Player player, WarpMenu menu) {
+        if (plugin.isReloading()) {
+            player.closeInventory();
+            player.sendMessage(MessageUtil.info("PixelWarp is currently reloading. Please try again shortly."));
+            return;
+        }
+
         int slot = event.getRawSlot();
         if (slot < 0 || slot >= 54) return;
 
@@ -185,6 +190,12 @@ public class MenuListener implements Listener {
         if (warp == null) return;
 
         playClickSound(player);
+
+        if (!warpManager.canAccess(warp, player.getUniqueId())) {
+            player.closeInventory();
+            player.sendMessage(MessageUtil.error("That warp is private."));
+            return;
+        }
 
         if (event.isShiftClick()) {
             // Shift click → show info

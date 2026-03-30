@@ -9,16 +9,26 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
+import java.util.logging.Logger;
 
 public class WarpManager {
 
     private final ConcurrentHashMap<String, Warp> warps = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Warp> warpIdIndex = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<WarpCategory, List<Warp>> categoryIndex = new ConcurrentHashMap<>();
-    private final WarpStorage storage;
+    private volatile WarpStorageProvider storage;
     private WarpAccessManager accessManager;
+    private Predicate<UUID> adminChecker = uuid -> false;
+    private Supplier<Boolean> readOnlyChecker = () -> false;
 
-    public WarpManager(WarpStorage storage) {
+    public WarpManager(WarpStorageProvider storage) {
+        this.storage = storage;
+    }
+
+    public void setStorageProvider(WarpStorageProvider storage) {
         this.storage = storage;
     }
 
@@ -30,12 +40,28 @@ public class WarpManager {
         return accessManager;
     }
 
+    public void setAdminChecker(Predicate<UUID> adminChecker) {
+        this.adminChecker = adminChecker != null ? adminChecker : (uuid -> false);
+    }
+
+    public void setReadOnlyChecker(Supplier<Boolean> readOnlyChecker) {
+        this.readOnlyChecker = readOnlyChecker != null ? readOnlyChecker : (() -> false);
+    }
+
+    public boolean isReadOnly() {
+        return readOnlyChecker.get();
+    }
+
+    public boolean isAdmin(UUID playerUuid) {
+        return playerUuid != null && adminChecker.test(playerUuid);
+    }
+
     public void initialize(List<Warp> warpList) {
         warps.clear();
+        warpIdIndex.clear();
         categoryIndex.clear();
         for (Warp warp : warpList) {
-            warps.put(warp.getName().toLowerCase(), warp);
-            categoryIndex.computeIfAbsent(warp.getCategory(), k -> new CopyOnWriteArrayList<>()).add(warp);
+            putWarpInCache(warp);
         }
     }
 
@@ -44,20 +70,33 @@ public class WarpManager {
     }
 
     public CompletableFuture<Void> createWarp(Warp warp) {
-        warps.put(warp.getName().toLowerCase(), warp);
-        categoryIndex.computeIfAbsent(warp.getCategory(), k -> new CopyOnWriteArrayList<>()).add(warp);
-        return storage.save(warp);
+        if (isReadOnly()) {
+            return CompletableFuture.completedFuture(null);
+        }
+
+        Warp toPersist = cloneWarp(warp);
+        return storage.saveWarp(toPersist).thenRun(() -> {
+            applyWarpFields(warp, toPersist);
+            putWarpInCache(warp);
+        });
     }
 
     public void deleteWarp(String name) {
-        Warp warp = warps.remove(name.toLowerCase());
+        if (isReadOnly()) {
+            return;
+        }
+
+        Warp warp = warps.get(name.toLowerCase());
         if (warp != null) {
-            List<Warp> catList = categoryIndex.get(warp.getCategory());
-            if (catList != null) catList.remove(warp);
-            if (accessManager != null) {
-                accessManager.removeAllAccess(warp.getId());
-            }
-            storage.delete(warp.getId(), name);
+            storage.deleteWarp(name).thenRun(() -> {
+                removeWarpFromCache(warp);
+                if (accessManager != null) {
+                    accessManager.removeAllAccess(warp.getId());
+                }
+            }).exceptionally(ex -> {
+                logFailure("delete", name, ex);
+                return null;
+            });
         }
     }
 
@@ -66,14 +105,23 @@ public class WarpManager {
      * Access cache is keyed by warp_id so no access update needed on rename.
      */
     public void renameWarp(String oldName, String newName) {
-        Warp warp = warps.remove(oldName.toLowerCase());
+        if (isReadOnly()) {
+            return;
+        }
+
+        Warp warp = warps.get(oldName.toLowerCase());
         if (warp != null) {
-            int warpId = warp.getId();
-            warp.setName(newName);
-            warps.put(newName.toLowerCase(), warp);
-            // Access cache uses warp_id — no update needed on rename.
-            // warp_access.warp_name updated for backward compat inside storage transaction.
-            storage.rename(warpId, oldName, newName);
+            Warp toPersist = cloneWarp(warp);
+            toPersist.setName(newName);
+
+            storage.saveWarp(toPersist).thenRun(() -> {
+                removeWarpFromCache(warp);
+                applyWarpFields(warp, toPersist);
+                putWarpInCache(warp);
+            }).exceptionally(ex -> {
+                logFailure("rename", oldName + " -> " + newName, ex);
+                return null;
+            });
         }
     }
 
@@ -81,42 +129,77 @@ public class WarpManager {
      * Update warp location in cache and database.
      */
     public void updateLocation(Warp warp, Location loc) {
-        warp.setWorld(loc.getWorld().getName());
-        warp.setX(loc.getX());
-        warp.setY(loc.getY());
-        warp.setZ(loc.getZ());
-        warp.setYaw(loc.getYaw());
-        warp.setPitch(loc.getPitch());
-        storage.updateLocation(warp.getName(), loc.getWorld().getName(),
-                loc.getX(), loc.getY(), loc.getZ(), loc.getYaw(), loc.getPitch());
+        if (isReadOnly()) {
+            return;
+        }
+
+        Warp toPersist = cloneWarp(warp);
+        toPersist.setWorld(loc.getWorld().getName());
+        toPersist.setX(loc.getX());
+        toPersist.setY(loc.getY());
+        toPersist.setZ(loc.getZ());
+        toPersist.setYaw(loc.getYaw());
+        toPersist.setPitch(loc.getPitch());
+
+        storage.saveWarp(toPersist).thenRun(() -> applyWarpFields(warp, toPersist)).exceptionally(ex -> {
+            logFailure("update location", warp.getName(), ex);
+            return null;
+        });
     }
 
     /**
      * Update warp category in cache, category index, and database.
      */
     public void updateCategory(Warp warp, WarpCategory newCategory) {
-        WarpCategory oldCategory = warp.getCategory();
-        List<Warp> oldList = categoryIndex.get(oldCategory);
-        if (oldList != null) oldList.remove(warp);
-        warp.setCategory(newCategory);
-        categoryIndex.computeIfAbsent(newCategory, k -> new CopyOnWriteArrayList<>()).add(warp);
-        storage.updateCategory(warp.getName(), newCategory);
+        if (isReadOnly()) {
+            return;
+        }
+
+        Warp toPersist = cloneWarp(warp);
+        toPersist.setCategory(newCategory);
+
+        storage.saveWarp(toPersist).thenRun(() -> {
+            removeWarpFromCache(warp);
+            applyWarpFields(warp, toPersist);
+            putWarpInCache(warp);
+        }).exceptionally(ex -> {
+            logFailure("update category", warp.getName(), ex);
+            return null;
+        });
     }
 
     /**
      * Update warp visibility in cache and database.
      */
     public void updateVisibility(Warp warp, boolean isPublic) {
-        warp.setPublic(isPublic);
-        storage.updateVisibility(warp.getName(), isPublic);
+        if (isReadOnly()) {
+            return;
+        }
+
+        Warp toPersist = cloneWarp(warp);
+        toPersist.setPublic(isPublic);
+
+        storage.saveWarp(toPersist).thenRun(() -> applyWarpFields(warp, toPersist)).exceptionally(ex -> {
+            logFailure("update visibility", warp.getName(), ex);
+            return null;
+        });
     }
 
     public void incrementUsage(String name) {
+        if (isReadOnly()) {
+            return;
+        }
+
         Warp warp = warps.get(name.toLowerCase());
         if (warp != null) {
-            warp.setUsageCount(warp.getUsageCount() + 1);
-            warp.setLastUsed(Instant.now());
-            storage.updateUsage(warp.getName(), warp.getUsageCount(), warp.getLastUsed());
+            Warp toPersist = cloneWarp(warp);
+            toPersist.setUsageCount(toPersist.getUsageCount() + 1);
+            toPersist.setLastUsed(Instant.now());
+
+            storage.saveWarp(toPersist).thenRun(() -> applyWarpFields(warp, toPersist)).exceptionally(ex -> {
+                logFailure("increment usage", warp.getName(), ex);
+                return null;
+            });
         }
     }
 
@@ -132,6 +215,13 @@ public class WarpManager {
         } else {
             source = warps.values();
         }
+
+        if (isAdmin(playerUuid)) {
+            return source.stream()
+                    .sorted(Comparator.comparing(Warp::getName, String.CASE_INSENSITIVE_ORDER))
+                    .collect(Collectors.toList());
+        }
+
         return source.stream()
                 .filter(w -> w.isPublic()
                         || w.getOwnerUuid().equals(playerUuid)
@@ -151,6 +241,7 @@ public class WarpManager {
      * Check if a player can use a specific warp (teleport, preview, stats).
      */
     public boolean canAccess(Warp warp, UUID playerUuid) {
+        if (isAdmin(playerUuid)) return true;
         if (warp.isPublic()) return true;
         if (warp.getOwnerUuid().equals(playerUuid)) return true;
         return accessManager != null && accessManager.hasAccess(warp.getId(), playerUuid);
@@ -207,7 +298,74 @@ public class WarpManager {
         return warps.size();
     }
 
-    public WarpStorage getStorage() {
+    public Warp getWarpById(int id) {
+        return warpIdIndex.get(id);
+    }
+
+    public String getWarpNameById(int id) {
+        Warp warp = warpIdIndex.get(id);
+        return warp != null ? warp.getName() : null;
+    }
+
+    public WarpStorageProvider getStorage() {
         return storage;
+    }
+
+    private void putWarpInCache(Warp warp) {
+        warps.put(warp.getName().toLowerCase(), warp);
+        warpIdIndex.put(warp.getId(), warp);
+        categoryIndex.computeIfAbsent(warp.getCategory(), k -> new CopyOnWriteArrayList<>()).add(warp);
+    }
+
+    private void removeWarpFromCache(Warp warp) {
+        warps.remove(warp.getName().toLowerCase());
+        warpIdIndex.remove(warp.getId());
+        List<Warp> catList = categoryIndex.get(warp.getCategory());
+        if (catList != null) {
+            catList.remove(warp);
+        }
+    }
+
+    private Warp cloneWarp(Warp warp) {
+        return new Warp(
+                warp.getId(),
+                warp.getName(),
+                warp.getOwnerUuid(),
+                warp.getWorld(),
+                warp.getX(),
+                warp.getY(),
+                warp.getZ(),
+                warp.getYaw(),
+                warp.getPitch(),
+                warp.isPublic(),
+                warp.getIconMaterial(),
+                warp.getCategory(),
+                warp.getCreatedAt(),
+                warp.getUsageCount(),
+                warp.getLastUsed()
+        );
+    }
+
+    private void applyWarpFields(Warp target, Warp source) {
+        target.setId(source.getId());
+        target.setName(source.getName());
+        target.setOwnerUuid(source.getOwnerUuid());
+        target.setWorld(source.getWorld());
+        target.setX(source.getX());
+        target.setY(source.getY());
+        target.setZ(source.getZ());
+        target.setYaw(source.getYaw());
+        target.setPitch(source.getPitch());
+        target.setPublic(source.isPublic());
+        target.setIconMaterial(source.getIconMaterial());
+        target.setCategory(source.getCategory());
+        target.setCreatedAt(source.getCreatedAt());
+        target.setUsageCount(source.getUsageCount());
+        target.setLastUsed(source.getLastUsed());
+    }
+
+    private void logFailure(String action, String target, Throwable ex) {
+        Logger.getLogger(WarpManager.class.getName())
+                .warning("Warp storage write failed during " + action + " for '" + target + "': " + ex.getMessage());
     }
 }

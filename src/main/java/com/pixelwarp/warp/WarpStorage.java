@@ -9,73 +9,122 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
-public class WarpStorage {
+public class WarpStorage implements WarpStorageProvider {
 
     private final MySQL mysql;
     private final Logger logger;
+    private final AtomicInteger pendingOperations = new AtomicInteger(0);
 
     public WarpStorage(MySQL mysql, Logger logger) {
         this.mysql = mysql;
         this.logger = logger;
     }
 
-    public CompletableFuture<List<Warp>> loadAll() {
-        return CompletableFuture.supplyAsync(() -> {
-            List<Warp> warps = new ArrayList<>();
-            String sql = "SELECT * FROM warps";
-            try (Connection conn = mysql.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(sql);
-                 ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    warps.add(mapRow(rs));
+    @Override
+    public CompletableFuture<Void> saveWarp(Warp warp) {
+        return track(CompletableFuture.runAsync(() -> {
+            if (warp.getId() > 0) {
+                upsertWithId(warp);
+            } else {
+                insertNew(warp);
+            }
+        }, mysql.getExecutor()));
+    }
+
+    @Override
+    public Warp getWarp(String name) {
+        String sql = "SELECT * FROM warps WHERE name = ? LIMIT 1";
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, name);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return mapRow(rs);
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("Failed to load warp '" + name + "': " + e.getMessage());
+        }
+        return null;
+    }
+
+    @Override
+    public List<Warp> getAllWarps() {
+        List<Warp> warps = new ArrayList<>();
+        String sql = "SELECT * FROM warps";
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                warps.add(mapRow(rs));
+            }
+        } catch (SQLException e) {
+            logger.severe("Failed to load warps: " + e.getMessage());
+        }
+        return warps;
+    }
+
+    @Override
+    public CompletableFuture<Void> deleteWarp(String name) {
+        return track(CompletableFuture.runAsync(() -> {
+            try (Connection conn = mysql.getConnection()) {
+                conn.setAutoCommit(false);
+                try {
+                    Integer warpId = null;
+                    try (PreparedStatement find = conn.prepareStatement(
+                            "SELECT id FROM warps WHERE name = ? LIMIT 1")) {
+                        find.setString(1, name);
+                        try (ResultSet rs = find.executeQuery()) {
+                            if (rs.next()) {
+                                warpId = rs.getInt("id");
+                            }
+                        }
+                    }
+
+                    if (warpId != null) {
+                        try (PreparedStatement ps = conn.prepareStatement(
+                                "DELETE FROM warp_access WHERE warp_id = ?")) {
+                            ps.setInt(1, warpId);
+                            ps.executeUpdate();
+                        }
+                    }
+
+                    try (PreparedStatement ps = conn.prepareStatement(
+                            "DELETE FROM warps WHERE name = ?")) {
+                        ps.setString(1, name);
+                        ps.executeUpdate();
+                    }
+
+                    conn.commit();
+                } catch (SQLException e) {
+                    conn.rollback();
+                    throw e;
+                } finally {
+                    conn.setAutoCommit(true);
                 }
             } catch (SQLException e) {
-                logger.severe("Failed to load warps: " + e.getMessage());
+                logger.severe("Failed to delete warp '" + name + "': " + e.getMessage());
+                throw new CompletionException(e);
             }
-            return warps;
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
+    }
+
+    @Override
+    public CompletableFuture<List<Warp>> getAllWarpsAsync() {
+        return track(CompletableFuture.supplyAsync(this::getAllWarps, mysql.getExecutor()));
+    }
+
+    public CompletableFuture<List<Warp>> loadAll() {
+        return getAllWarpsAsync();
     }
 
     public CompletableFuture<Void> save(Warp warp) {
-        return CompletableFuture.runAsync(() -> {
-            String sql = """
-                    INSERT INTO warps (name, owner_uuid, world, x, y, z, yaw, pitch,
-                                       is_public, icon_material, category, created_at, usage_count, last_used)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """;
-            try (Connection conn = mysql.getConnection();
-                 PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
-                ps.setString(1, warp.getName());
-                ps.setString(2, warp.getOwnerUuid().toString());
-                ps.setString(3, warp.getWorld());
-                ps.setDouble(4, warp.getX());
-                ps.setDouble(5, warp.getY());
-                ps.setDouble(6, warp.getZ());
-                ps.setFloat(7, warp.getYaw());
-                ps.setFloat(8, warp.getPitch());
-                ps.setBoolean(9, warp.isPublic());
-                ps.setString(10, warp.getIconMaterial().name());
-                ps.setString(11, warp.getCategory().name());
-                ps.setTimestamp(12, Timestamp.from(warp.getCreatedAt()));
-                ps.setInt(13, warp.getUsageCount());
-                if (warp.getLastUsed() != null) {
-                    ps.setTimestamp(14, Timestamp.from(warp.getLastUsed()));
-                } else {
-                    ps.setNull(14, Types.TIMESTAMP);
-                }
-                ps.executeUpdate();
-
-                try (ResultSet keys = ps.getGeneratedKeys()) {
-                    if (keys.next()) {
-                        warp.setId(keys.getInt(1));
-                    }
-                }
-            } catch (SQLException e) {
-                logger.severe("Failed to save warp '" + warp.getName() + "': " + e.getMessage());
-            }
-        }, mysql.getExecutor());
+        return saveWarp(warp);
     }
 
     public CompletableFuture<Void> delete(int warpId, String name) {
@@ -107,7 +156,7 @@ public class WarpStorage {
     }
 
     public CompletableFuture<Void> updateUsage(String name, int usageCount, Instant lastUsed) {
-        return CompletableFuture.runAsync(() -> {
+        return track(CompletableFuture.runAsync(() -> {
             String sql = "UPDATE warps SET usage_count = ?, last_used = ? WHERE name = ?";
             try (Connection conn = mysql.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -118,11 +167,11 @@ public class WarpStorage {
             } catch (SQLException e) {
                 logger.severe("Failed to update usage for warp '" + name + "': " + e.getMessage());
             }
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
     }
 
     public CompletableFuture<Void> updateLocation(String name, String world, double x, double y, double z, float yaw, float pitch) {
-        return CompletableFuture.runAsync(() -> {
+        return track(CompletableFuture.runAsync(() -> {
             String sql = "UPDATE warps SET world = ?, x = ?, y = ?, z = ?, yaw = ?, pitch = ? WHERE name = ?";
             try (Connection conn = mysql.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -137,11 +186,11 @@ public class WarpStorage {
             } catch (SQLException e) {
                 logger.severe("Failed to update location for warp '" + name + "': " + e.getMessage());
             }
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
     }
 
     public CompletableFuture<Void> updateCategory(String name, WarpCategory category) {
-        return CompletableFuture.runAsync(() -> {
+        return track(CompletableFuture.runAsync(() -> {
             String sql = "UPDATE warps SET category = ? WHERE name = ?";
             try (Connection conn = mysql.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -151,11 +200,11 @@ public class WarpStorage {
             } catch (SQLException e) {
                 logger.severe("Failed to update category for warp '" + name + "': " + e.getMessage());
             }
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
     }
 
     public CompletableFuture<Void> updateVisibility(String name, boolean isPublic) {
-        return CompletableFuture.runAsync(() -> {
+        return track(CompletableFuture.runAsync(() -> {
             String sql = "UPDATE warps SET is_public = ? WHERE name = ?";
             try (Connection conn = mysql.getConnection();
                  PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -165,11 +214,11 @@ public class WarpStorage {
             } catch (SQLException e) {
                 logger.severe("Failed to update visibility for warp '" + name + "': " + e.getMessage());
             }
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
     }
 
     public CompletableFuture<Void> rename(int warpId, String oldName, String newName) {
-        return CompletableFuture.runAsync(() -> {
+        return track(CompletableFuture.runAsync(() -> {
             try (Connection conn = mysql.getConnection()) {
                 conn.setAutoCommit(false);
                 try {
@@ -196,7 +245,109 @@ public class WarpStorage {
             } catch (SQLException e) {
                 logger.severe("Failed to rename warp '" + oldName + "' to '" + newName + "': " + e.getMessage());
             }
-        }, mysql.getExecutor());
+        }, mysql.getExecutor()));
+    }
+
+    public CompletableFuture<Void> flushPendingOperations(long timeoutMillis) {
+        return CompletableFuture.runAsync(() -> {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(Math.max(0, timeoutMillis));
+            while (pendingOperations.get() > 0 && System.nanoTime() < deadline) {
+                try {
+                    Thread.sleep(10L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+
+            if (pendingOperations.get() > 0) {
+                logger.warning("Timed out waiting for pending MySQL storage operations: " + pendingOperations.get());
+            }
+        });
+    }
+
+    private <T> CompletableFuture<T> track(CompletableFuture<T> future) {
+        pendingOperations.incrementAndGet();
+        return future.whenComplete((r, ex) -> pendingOperations.decrementAndGet());
+    }
+
+    private void insertNew(Warp warp) {
+        String sql = """
+                INSERT INTO warps (name, owner_uuid, world, x, y, z, yaw, pitch,
+                                   is_public, icon_material, category, created_at, usage_count, last_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
+            bindWarp(ps, warp, false);
+            ps.executeUpdate();
+
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                if (keys.next()) {
+                    warp.setId(keys.getInt(1));
+                }
+            }
+        } catch (SQLException e) {
+            logger.severe("Failed to save warp '" + warp.getName() + "': " + e.getMessage());
+            throw new CompletionException(e);
+        }
+    }
+
+    private void upsertWithId(Warp warp) {
+        String sql = """
+                INSERT INTO warps (id, name, owner_uuid, world, x, y, z, yaw, pitch,
+                                   is_public, icon_material, category, created_at, usage_count, last_used)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE
+                    name = VALUES(name),
+                    owner_uuid = VALUES(owner_uuid),
+                    world = VALUES(world),
+                    x = VALUES(x),
+                    y = VALUES(y),
+                    z = VALUES(z),
+                    yaw = VALUES(yaw),
+                    pitch = VALUES(pitch),
+                    is_public = VALUES(is_public),
+                    icon_material = VALUES(icon_material),
+                    category = VALUES(category),
+                    created_at = VALUES(created_at),
+                    usage_count = VALUES(usage_count),
+                    last_used = VALUES(last_used)
+                """;
+        try (Connection conn = mysql.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            bindWarp(ps, warp, true);
+            ps.executeUpdate();
+        } catch (SQLException e) {
+            logger.severe("Failed to upsert warp '" + warp.getName() + "': " + e.getMessage());
+            throw new CompletionException(e);
+        }
+    }
+
+    private void bindWarp(PreparedStatement ps, Warp warp, boolean includesId) throws SQLException {
+        int idx = 1;
+        if (includesId) {
+            ps.setInt(idx++, warp.getId());
+        }
+
+        ps.setString(idx++, warp.getName());
+        ps.setString(idx++, warp.getOwnerUuid().toString());
+        ps.setString(idx++, warp.getWorld());
+        ps.setDouble(idx++, warp.getX());
+        ps.setDouble(idx++, warp.getY());
+        ps.setDouble(idx++, warp.getZ());
+        ps.setFloat(idx++, warp.getYaw());
+        ps.setFloat(idx++, warp.getPitch());
+        ps.setBoolean(idx++, warp.isPublic());
+        ps.setString(idx++, warp.getIconMaterial().name());
+        ps.setString(idx++, warp.getCategory().name());
+        ps.setTimestamp(idx++, Timestamp.from(warp.getCreatedAt() != null ? warp.getCreatedAt() : Instant.now()));
+        ps.setInt(idx++, warp.getUsageCount());
+        if (warp.getLastUsed() != null) {
+            ps.setTimestamp(idx, Timestamp.from(warp.getLastUsed()));
+        } else {
+            ps.setNull(idx, Types.TIMESTAMP);
+        }
     }
 
     private Warp mapRow(ResultSet rs) throws SQLException {

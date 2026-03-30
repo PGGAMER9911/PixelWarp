@@ -1,17 +1,49 @@
 # PixelWarp Configuration
 config-version: 1
 
+storage:
+  # FILE (default) or MYSQL
+  type: FILE
+  # Automatically updated after successful startup/migration
+  last-type: FILE
+
+mysql:
+  host: localhost
+  port: 3306
+  database: pixelwarp
+  username: root
+  password: "password"
+  pool-size: 5
+
+# Legacy key path kept for backward compatibility with older builds
 database:
   host: localhost
   port: 3306
   database: pixelwarp
   username: root
-  password: ""
+  password: "password"
   pool-size: 5
+
+file:
+  path: plugins/PixelWarp/data/
+  encryption: true
+  secret-key: "change-this-to-16-char-key"
+  compression: false
 
 # UUIDs of server owners who can delete any warp
 server-owners:
   - "00000000-0000-0000-0000-000000000000"
+
+# Global warp admins (separate from server owners)
+admins: []
+
+# Legacy format still supported for backward compatibility:
+# admins:
+#   uuids: []
+#   names: []
+
+warp:
+  create-delete-cooldown-seconds: 5
 
 teleport:
   countdown-seconds: 2
@@ -21,8 +53,21 @@ preview:
   duration-seconds: 10
 
 particles:
-  warp-marker:
+  engine:
     enabled: true
-    radius: 10
-    particle-count: 4
-    interval-ticks: 20
+    intensity: 1.0
+    radius: 32
+    interval-ticks: 5
+    index-refresh-ticks: 40
+    max-height-diff: 24
+    max-warps-per-player: 4
+    patterns:
+      ring: true
+      spiral: true
+      pulse: true
+    category-styles:
+      SPAWN: RING
+      SHOPS: PULSE
+      BASES: SPIRAL
+      EVENTS: SPIRAL
+      PLAYER_WARPS: PULSE

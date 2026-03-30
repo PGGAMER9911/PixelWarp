@@ -156,6 +156,7 @@ public class WarpMenu implements InventoryHolder {
     private ItemStack createWarpItem(Warp warp) {
         ItemStack item = new ItemStack(warp.getIconMaterial());
         ItemMeta meta = item.getItemMeta();
+        boolean adminViewer = warpManager.isAdmin(player.getUniqueId());
 
         NamedTextColor nameColor = warp.isPublic() ? NamedTextColor.GREEN : NamedTextColor.GOLD;
         meta.displayName(Component.text(warp.getName(), nameColor)
@@ -183,6 +184,10 @@ public class WarpMenu implements InventoryHolder {
         if (!warp.isPublic()) {
             lore.add(Component.text("PRIVATE", NamedTextColor.RED, TextDecoration.BOLD)
                     .decoration(TextDecoration.ITALIC, false));
+            if (adminViewer && !warp.getOwnerUuid().equals(player.getUniqueId())) {
+                lore.add(Component.text("Admin Override Access", NamedTextColor.LIGHT_PURPLE)
+                        .decoration(TextDecoration.ITALIC, false));
+            }
 
             // Shared indicator
             WarpAccessManager accessMgr = warpManager.getAccessManager();

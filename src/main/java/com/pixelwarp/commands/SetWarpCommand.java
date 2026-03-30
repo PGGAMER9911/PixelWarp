@@ -35,6 +35,8 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
 
     /** Maps player UUID → pending delete entry (warp name + timestamp). */
     private final ConcurrentHashMap<UUID, PendingDelete> pendingDeletes = new ConcurrentHashMap<>();
+    /** Maps player UUID → last successful create/delete timestamp. */
+    private final ConcurrentHashMap<UUID, Long> createDeleteCooldowns = new ConcurrentHashMap<>();
 
     public SetWarpCommand(WarpPlugin plugin) {
         this.plugin = plugin;
@@ -44,6 +46,11 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command,
                              @NotNull String label, @NotNull String[] args) {
+        if (plugin.isReloading()) {
+            sender.sendMessage(MessageUtil.info("PixelWarp is currently reloading. Please try again in a moment."));
+            return true;
+        }
+
         if (!(sender instanceof Player player)) {
             sender.sendMessage(MessageUtil.error("Only players can use this command."));
             return true;
@@ -59,6 +66,11 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handleSetWarp(Player player, String[] args) {
+        if (plugin.isReadOnlyMode()) {
+            player.sendMessage(MessageUtil.error("PixelWarp is in read-only failsafe mode: " + plugin.getReadOnlyReason()));
+            return true;
+        }
+
         if (args.length < 1) {
             player.sendMessage(MessageUtil.info("Usage: /setwarp <name> [category] [public|private]"));
             return true;
@@ -74,6 +86,10 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
 
         if (warpManager.getWarp(name) != null) {
             player.sendMessage(MessageUtil.error("A warp with that name already exists."));
+            return true;
+        }
+
+        if (!canUseCreateDelete(player)) {
             return true;
         }
 
@@ -115,6 +131,7 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
         );
 
         warpManager.createWarp(warp);
+        markCreateDeleteAction(player);
 
         String visibility = isPublic ? "public" : "private";
         player.sendMessage(MessageUtil.success(
@@ -123,6 +140,11 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
     }
 
     private boolean handleDelWarp(Player player, String[] args) {
+        if (plugin.isReadOnlyMode()) {
+            player.sendMessage(MessageUtil.error("PixelWarp is in read-only failsafe mode: " + plugin.getReadOnlyReason()));
+            return true;
+        }
+
         if (args.length < 1) {
             player.sendMessage(MessageUtil.info("Usage: /delwarp <name>"));
             return true;
@@ -140,11 +162,16 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
         }
 
         boolean isOwner = plugin.isServerOwner(player.getUniqueId());
+        boolean isAdmin = plugin.isAdmin(player.getUniqueId());
         boolean isWarpOwner = warp.getOwnerUuid().equals(player.getUniqueId());
 
-        // Only warp owner or server owner can delete
-        if (!isOwner && !isWarpOwner) {
-            player.sendMessage(MessageUtil.error("Only the warp owner can delete this warp."));
+        // Only warp owner, warp admin, or server owner can delete
+        if (!isOwner && !isAdmin && !isWarpOwner) {
+            player.sendMessage(MessageUtil.error("Only the warp owner, a warp admin, or a server owner can delete this warp."));
+            return true;
+        }
+
+        if (!isConfirm && !canUseCreateDelete(player)) {
             return true;
         }
 
@@ -191,6 +218,7 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
         }
 
         warpManager.deleteWarp(name);
+        markCreateDeleteAction(player);
         player.sendMessage(MessageUtil.success("Warp '" + warp.getName() + "' deleted."));
         return true;
     }
@@ -227,13 +255,18 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
 
     private List<String> getDeletableWarpNames(Player player) {
         boolean isOwner = plugin.isServerOwner(player.getUniqueId());
-        if (isOwner) {
-            return warpManager.getVisibleWarpNames(player);
+        boolean isAdmin = plugin.isAdmin(player.getUniqueId());
+        if (isOwner || isAdmin) {
+            return warpManager.getAllWarps().stream()
+                    .map(Warp::getName)
+                    .sorted(String.CASE_INSENSITIVE_ORDER)
+                    .collect(Collectors.toList());
         }
         // Players can delete their own warps (both public and private)
-        return warpManager.getVisibleWarps(player.getUniqueId()).stream()
+        return warpManager.getAllWarps().stream()
                 .filter(w -> w.getOwnerUuid().equals(player.getUniqueId()))
                 .map(Warp::getName)
+                .sorted(String.CASE_INSENSITIVE_ORDER)
                 .collect(Collectors.toList());
     }
 
@@ -241,6 +274,36 @@ public class SetWarpCommand implements CommandExecutor, TabCompleter {
         return options.stream()
                 .filter(s -> s.toLowerCase().startsWith(prefix.toLowerCase()))
                 .collect(Collectors.toList());
+    }
+
+    private boolean canUseCreateDelete(Player player) {
+        long cooldownMs = plugin.getCreateDeleteCooldownMillis();
+        if (cooldownMs <= 0) {
+            return true;
+        }
+
+        Long lastActionAt = createDeleteCooldowns.get(player.getUniqueId());
+        if (lastActionAt == null) {
+            return true;
+        }
+
+        long elapsed = System.currentTimeMillis() - lastActionAt;
+        if (elapsed >= cooldownMs) {
+            return true;
+        }
+
+        long remainingSec = (cooldownMs - elapsed + 999L) / 1000L;
+        player.sendMessage(MessageUtil.error(
+                "Create/delete cooldown active. Please wait " + remainingSec + "s."));
+        return false;
+    }
+
+    private void markCreateDeleteAction(Player player) {
+        if (plugin.getCreateDeleteCooldownMillis() <= 0) {
+            createDeleteCooldowns.remove(player.getUniqueId());
+            return;
+        }
+        createDeleteCooldowns.put(player.getUniqueId(), System.currentTimeMillis());
     }
 
     /** Simple holder for pending delete state. */
